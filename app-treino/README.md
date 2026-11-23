@@ -6,7 +6,8 @@ App de treino para hipertrofia em um único arquivo (`index.html`). É só abrir
 - **Registro por série:** carga (kg) e repetições, com carga sugerida pela progressão dupla.
 - **Mesociclo de 4 semanas:** Base → Volume (+1 série) → Intensidade (−2 reps, +5% de carga) → Deload (−40%).
 - **Calendário:** dias feitos, treinos perdidos e próximas datas sugeridas com a letra do treino e a fase.
-- **Cronômetro de descanso** ao concluir cada série.
+- **Duração do treino** (30 a 90 min, contando descanso): o app ajusta séries, descanso e exercícios para caber no tempo, com estimativa e tempo decorrido.
+- **Contador de descanso** entre séries: inicia ao concluir cada série (ou pelo botão ⏱), com som, vibração, ±15 s e aviso da próxima série.
 - **Coach IA** (ao abrir pelo link do Claude): plano do mês com exercícios diferentes em cada semana, análise do progresso, perguntas ao treinador e troca de exercícios por alternativas sugeridas.
 - **Backup** por código copiável (os dados ficam no `localStorage` do navegador).
 

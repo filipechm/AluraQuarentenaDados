@@ -148,9 +148,22 @@ nav.tabs .in{display:flex;max-width:720px;width:100%}
 nav.tabs button{flex:1;border:0;background:transparent;padding:10px 4px 12px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.75rem;font-weight:600;color:var(--muted)}
 nav.tabs button svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2}
 nav.tabs button.on{color:var(--accent)}
-.timer{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(70px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);border-radius:999px;padding:8px 8px 8px 16px;display:flex;gap:12px;align-items:center;z-index:6;box-shadow:0 6px 20px rgba(0,0,0,.25)}
-.timer b{font-family:var(--display);font-size:1.4rem;font-variant-numeric:tabular-nums}
-.timer button{border:0;border-radius:999px;padding:6px 12px;background:var(--bg);color:var(--ink);font-weight:600;font-size:.8rem}
+.timer{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom,0px));width:min(520px,calc(100% - 32px));background:var(--ink);color:var(--bg);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;z-index:6;box-shadow:0 8px 28px rgba(0,0,0,.3)}
+.timer .tm-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.timer .tm-time{font-family:var(--display);font-size:2.6rem;line-height:1;font-weight:700;font-variant-numeric:tabular-nums}
+.timer .tm-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.09em;font-weight:600;opacity:.75}
+.timer .tm-next{font-size:.85rem;opacity:.9;min-width:0}
+.timer .progress{background:color-mix(in srgb,var(--bg) 22%,transparent)}
+.timer .progress i{background:var(--bg)}
+.timer .tm-btns{display:flex;gap:6px}
+.timer button{border:0;border-radius:999px;padding:8px 12px;background:var(--bg);color:var(--ink);font-weight:600;font-size:.82rem}
+.timer button.tm-ghost{background:transparent;color:var(--bg);border:1px solid color-mix(in srgb,var(--bg) 40%,transparent)}
+.timer.ending .tm-time{color:var(--pC)}
+.restbtn{border:1px solid var(--line);background:transparent;border-radius:999px;padding:1px 8px;font-size:.85rem}
+.restbtn b{font-size:1.05rem}
+.durbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.durbar .chip{border:0}
+.adj{font-size:.72rem;font-weight:600;color:var(--warn);margin-left:4px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(16px + env(safe-area-inset-top,0px));background:var(--ok);color:#fff;padding:10px 16px;border-radius:10px;font-weight:600;z-index:7}
 .sync{font-size:.72rem;color:var(--muted)}
 /* IA */
@@ -181,7 +194,12 @@ nav.tabs button.on{color:var(--accent)}
 </style>
 
 <div class="wrap" id="app"></div>
-<div class="timer" id="timer" hidden></div>
+<div class="timer" id="timer" hidden role="timer" aria-live="off">
+  <div class="tm-row"><span class="tm-label">Descanso</span><button class="tm-ghost" data-act="tmute" id="tm-mute">Som ligado</button></div>
+  <div class="tm-row"><span class="tm-time" id="tm-time">0:00</span><div class="tm-btns"><button data-act="t-15" aria-label="Menos 15 segundos">−15s</button><button data-act="t15" aria-label="Mais 15 segundos">+15s</button><button data-act="tskip">Pular</button></div></div>
+  <div class="progress"><i id="tm-bar"></i></div>
+  <div class="tm-next" id="tm-next"></div>
+</div>
 <div class="toast" id="toast" hidden></div>
 <nav class="tabs" aria-label="Seções"><div class="in">
   <button data-tab="hoje" class="on"><svg viewBox="0 0 24 24"><path d="M6 7v10M18 7v10M3 10v4M21 10v4M6 12h12"/></svg>Treino</button>
@@ -284,7 +302,7 @@ const kg=x=>(Math.round(x*10)/10).toLocaleString("pt-BR");
 /* ---------- estado ---------- */
 const KEY="caderno-treino-v1";
 let S={settings:{split:"ABC",days:PROGRAMS.ABC.defDays.slice(),start:mondayOf(today())},sessions:{}};
-const UI={tab:"hoje",view:null,month:today().slice(0,7),sel:null,timerEnd:0,timerTotal:0,syncing:"local"};
+const UI={durPick:{},sound:true,tab:"hoje",view:null,month:today().slice(0,7),sel:null,timerEnd:0,timerTotal:0,syncing:"local"};
 
 /* ---------- persistência: banco do artefato (privado por pessoa) ou localStorage ---------- */
 const store={mode:"local",col:null,timers:{},chains:{},
@@ -334,6 +352,7 @@ const prog=()=>PROGRAMS[S.settings.split];
 const letters=()=>Object.keys(prog().days);
 function phaseOf(date){const w=Math.floor(diff(S.settings.start,date)/7);const i=((w%4)+4)%4;return Object.assign({i,week:i+1},PHASES[i])}
 function presc(ex,ph){
+  if(ex._fit)return ex._fit;
   let sets=ex.s+ph.sets; if(ph.k==="del")sets=Math.max(2,Math.round(ex.s*0.6)); sets=Math.min(sets,5);
   const r=[Math.max(4,ex.r[0]+ph.shift),Math.max(6,ex.r[1]+ph.shift)];
   const rest=ex.rest+(ph.k==="int"&&ex.comp?30:0);
@@ -390,6 +409,7 @@ function suggest(ex,date,ph){
 function ensureSession(date,letter){
   if(!S.sessions[date]){
     S.sessions[date]={date,letter,split:S.settings.split,status:"progress",ph:phaseOf(date).i,log:{}};
+    if(UI.durPick[date])S.sessions[date].dur=UI.durPick[date];
   }
   return S.sessions[date];
 }
@@ -400,10 +420,54 @@ function planFor(date){
 }
 function applySub(ex){const s=S.settings.subs&&S.settings.subs[ex.id];return s?Object.assign({},ex,{id:s.id,n:s.n,tip:s.tip||"",orig:ex.id,origN:ex.n}):ex}
 function customFor(split,date){const c=S.settings.custom;if(!c||!c.active||c.split!==split||!date)return null;return c.weeks[phaseOf(date).i]||null}
-function workoutDef(letter,split,date){
-  split=split||S.settings.split;
+function rawDef(letter,split,date){
   const wk=customFor(split,date); if(wk&&wk[letter])return{t:wk[letter].t,ex:wk[letter].ex.map(applySub),custom:true};
   const p=PROGRAMS[split];const w=p.days[letter]||p.days[Object.keys(p.days)[0]];return{t:w.t,ex:w.ex.map(applySub)}}
+const DURS=[30,45,60,75,90];
+function targetMin(date){const s=S.sessions[date];return (s&&s.dur)||UI.durPick[date]||S.settings.duration||60}
+/* Ajusta o treino ao tempo disponível. Estimativa: 40 s por série + descanso entre séries + 1,5 min de preparo por exercício + 5 min de aquecimento */
+const WORK=40,SETUP=90,WARM=5;
+const exSec=it=>it.p.sets*WORK+(it.p.sets-1)*it.p.rest+SETUP;
+function fitTime(exs,ph,target,keep){
+  const it=exs.map(ex=>{const p=presc(ex,ph);return{ex,base:p,p:{sets:p.sets,r:p.r,rest:p.rest},drop:false}});
+  const live=()=>it.filter(x=>!x.drop);
+  const est=()=>WARM*60+live().reduce((a,x)=>a+exSec(x),0);
+  const T=target*60;
+  const iso=x=>!x.ex.comp, cmp=x=>x.ex.comp;
+  const rev=a=>a.slice().reverse();
+  const steps=[
+    ()=>{const x=rev(live()).find(x=>iso(x)&&x.p.rest>60);if(x){x.p.rest-=15;return true}},
+    ()=>{const x=rev(live()).find(x=>iso(x)&&x.p.sets>2);if(x){x.p.sets--;return true}},
+    ()=>{if(live().length<=4)return;const x=rev(live()).find(x=>iso(x)&&!keep.includes(x.ex.id));if(x){x.drop=true;return true}},
+    ()=>{const x=rev(live()).find(x=>cmp(x)&&x.p.rest>90);if(x){x.p.rest-=15;return true}},
+    ()=>{const x=rev(live()).find(x=>cmp(x)&&x.p.sets>2);if(x){x.p.sets--;return true}},
+    ()=>{if(live().length<=3)return;const x=rev(live()).find(x=>!keep.includes(x.ex.id));if(x){x.drop=true;return true}}
+  ];
+  let guard=0;
+  while(est()>T&&guard++<200){if(!steps.some(f=>f()))break}
+  if(ph.k!=="del"){
+    guard=0;
+    while(guard++<60){
+      const cand=live().filter(x=>x.p.sets<Math.min(x.base.sets+1,x.ex.comp?5:4)).sort((a,b)=>(b.ex.comp-a.ex.comp)||(a.p.sets-b.p.sets))[0];
+      if(!cand||est()+WORK+cand.p.rest>T)break; cand.p.sets++;
+    }
+    guard=0;
+    while(guard++<60){
+      const cand=live().filter(x=>x.p.rest<x.base.rest+30).sort((a,b)=>(b.ex.comp-a.ex.comp)||(a.p.rest-b.p.rest))[0];
+      if(!cand||est()+15*(cand.p.sets-1)>T)break; cand.p.rest+=15;
+    }
+  }
+  return{ex:live().map(x=>Object.assign({},x.ex,{_fit:x.p,_adj:x.p.sets!==x.base.sets||x.p.rest!==x.base.rest})),
+    est:Math.round(est()/60),dropped:it.filter(x=>x.drop).map(x=>x.ex.n)};
+}
+function workoutDef(letter,split,date){
+  split=split||S.settings.split;
+  const d=rawDef(letter,split,date); if(!date)return d;
+  const s=S.sessions[date]; const ph=s&&s.ph!=null?PHASES[s.ph]:phaseOf(date);
+  const keep=s?Object.entries(s.log||{}).filter(([,e])=>setsOf(e).some(x=>x.ok)).map(([id])=>id):[];
+  const tg=targetMin(date); const f=fitTime(d.ex,ph,tg,keep);
+  return Object.assign({},d,{ex:f.ex,est:f.est,dropped:f.dropped,target:tg});
+}
 function logItems(s){return Object.entries(s.log||{}).map(([id,e])=>({id,n:e.n||id,ok:setsOf(e).filter(x=>x.ok)})).filter(x=>x.ok.length)}
 
 /* ---------- IA (Claude via capacidade "sample") ---------- */
@@ -504,7 +568,7 @@ function altBox(ex){
 }
 /* ---------- Plano do mês com IA: exercícios diferentes em cada semana do ciclo ---------- */
 AI.mp={prefs:{equip:"Academia completa",time:"60 min",level:"Intermediário",focus:[],notes:""},busy:false,step:0,draft:null,err:"",view:0};
-const MP_OPTS={equip:["Academia completa","Academia básica","Em casa com halteres"],time:["45 min","60 min","75+ min"],level:["Iniciante","Intermediário","Avançado"],
+const MP_OPTS={equip:["Academia completa","Academia básica","Em casa com halteres"],level:["Iniciante","Intermediário","Avançado"],
   focus:["Peito","Costas","Ombros","Braços","Quadríceps","Posteriores e glúteos","Panturrilha","Abdômen"]};
 const slugify=t=>String(t).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,48);
 const clampN=(v,a,b,d)=>{v=Math.round(+v);return isFinite(v)?Math.min(b,Math.max(a,v)):d};
@@ -529,7 +593,7 @@ function normWeek(r,L){
 async function genMonth(){
   if(!AI.fn||AI.mp.busy)return;
   const split=S.settings.split, L=letters(), pf=AI.mp.prefs, base=PROGRAMS[split].days;
-  const nEx=pf.time==="45 min"?5:pf.time==="60 min"?6:7;
+  const dur=S.settings.duration||60; const nEx=dur<=30?4:dur<=45?5:dur<=60?6:7;
   AI.mp.busy=true;AI.mp.err="";AI.mp.step=0;AI.mp.draft={split,name:"",weeks:[]};AI.mp.view=0;render();
   try{
     for(let w=0;w<4;w++){
@@ -540,7 +604,7 @@ async function genMonth(){
       const prompt=`Você é um treinador de musculação (CREF) especialista em hipertrofia montando a SEMANA ${w+1} de 4 de um plano mensal com exercícios variados.
 Divisão ${split}, ${S.settings.days.length} treinos por semana. Grupos musculares de cada treino (mantenha):
 ${L.map(l=>`Treino ${l}: ${base[l].t}`).join("\n")}
-Aluno: nível ${pf.level}; local: ${pf.equip}; tempo por treino: ${pf.time}.${pf.focus.length?" Prioridade de grupos: "+pf.focus.join(", ")+" (dê um exercício a mais ou mais séries para eles).":""}${pf.notes?" Observações do aluno: "+pf.notes.slice(0,400):""}
+Aluno: nível ${pf.level}; local: ${pf.equip}; tempo por treino: ${dur} minutos contando o descanso.${pf.focus.length?" Prioridade de grupos: "+pf.focus.join(", ")+" (dê um exercício a mais ou mais séries para eles).":""}${pf.notes?" Observações do aluno: "+pf.notes.slice(0,400):""}
 Fase desta semana no ciclo: ${ph.name}. O app aplica sozinho os ajustes da fase (volume +1 série, intensidade -2 reps, deload -40%), então informe a prescrição BASE.
 Regras:
 - ${nEx} exercícios por treino, do composto para o isolado. Use apenas equipamentos disponíveis em "${pf.equip}".
@@ -574,7 +638,7 @@ function viewMonthPlan(){
       <button class="btn primary" data-act="mp-activate">Ativar este plano</button>
       <div class="row"><button class="btn" data-act="mp-gen">Gerar outro</button><button class="btn ghost" data-act="mp-discard">Descartar</button></div></div>`;
   }else{
-    body=`<div class="stack">${opt("equip","Onde você treina")}${opt("time","Tempo por treino")}${opt("level","Nível")}${opt("focus","Prioridades (opcional)")}
+    body=`<div class="stack">${opt("equip","Onde você treina")}<div><span class="eyebrow">Tempo por treino</span><p class="small" style="margin:6px 0 0"><b>${S.settings.duration||60} min</b> <span class="muted">· altere em Programa → Duração de cada treino</span></p></div>${opt("level","Nível")}${opt("focus","Prioridades (opcional)")}
       <div><label class="eyebrow" for="mpnotes">Observações (opcional)</label><textarea id="mpnotes" style="font:inherit;font-size:.9rem;min-height:60px;margin-top:6px" placeholder="Ex.: dor no joelho, não gosto de agachamento livre">${esc(pf.notes)}</textarea></div>
       ${m.err?`<div class="ai-err">${esc(m.err)}</div>`:""}
       <button class="btn primary" data-act="mp-gen">Gerar plano do mês (divisão ${st.split})</button></div>`;
@@ -658,7 +722,7 @@ function viewHoje(){
     const last=sg.ref?`Última: ${kg(sg.ref.kg)} kg × ${sg.ref.reps.map(r=>r==null?"?":r).join(", ")}`:"";
     return `<div class="card ex"><div class="ex-head"><span class="ex-n num">${n+1}</span><div class="meta">
         <h3>${esc(ex.n)}</h3>${ex.orig?`<div class="subnote">No lugar de ${ex.origN} · <button data-act="unsub" data-o="${ex.orig}">voltar ao original</button></div>`:""}
-        <div class="presc num"><span><b>${p.sets} × ${p.r[0]}–${p.r[1]}</b> reps</span><span>descanso <b>${p.rest}s</b></span><span>RIR <b>${ph.rir}</b></span></div></div>${AI.fn&&!done?`<button class="altbtn" data-act="alt" data-ex="${ex.id}">Trocar</button>`:""}</div>
+        <div class="presc num"><span><b>${p.sets} × ${p.r[0]}–${p.r[1]}</b> reps${ex._adj?`<span class="adj">ajustado ao tempo</span>`:""}</span><span>descanso ${!done?`<button class="restbtn" data-act="rest" data-ex="${ex.id}" data-rest="${p.rest}" aria-label="Iniciar descanso de ${p.rest} segundos">⏱ <b>${p.rest}s</b></button>`:`<b>${p.rest}s</b>`}</span><span>RIR <b>${ph.rir}</b></span></div></div>${AI.fn&&!done?`<button class="altbtn" data-act="alt" data-ex="${ex.id}">Trocar</button>`:""}</div>
       ${altBox(ex)}
       <div class="sug"><span>Carga sugerida: <strong class="num">${sg.kg!=null?kg(sg.kg)+" kg":"a definir"}</strong> <span class="muted">${sg.kg!=null?"· "+sg.txt:""}</span></span><span class="muted num">${sg.kg!=null?last:sg.txt}</span></div>
       <div class="sets">${rows.join("")}</div>
@@ -672,6 +736,8 @@ function viewHoje(){
     <div class="card"><div class="top">${plate(letter)}<div class="meta"><h1>Treino ${letter}</h1><div class="muted">${esc(def.t)}</div>${def.custom?`<span class="chip" style="margin-top:4px">Plano do mês · IA</span>`:""}</div></div>
       ${phaseBar(ph)}
       <p class="small" style="margin:8px 0 0"><b>Semana ${ph.week} de 4 · ${ph.name}.</b> <span class="muted">${ph.note}</span></p>
+      ${!done?`<div style="margin-top:12px"><div class="durbar" role="group" aria-label="Tempo disponível"><span class="small muted">Tempo disponível:</span>${DURS.map(m=>`<button class="chip ${def.target===m?"on":""}" data-act="dur" data-m="${m}" aria-pressed="${def.target===m}">${m} min</button>`).join("")}</div>
+        <p class="small muted num" style="margin:6px 0 0">Estimativa: <b>≈ ${def.est} min</b> com aquecimento e descanso${def.est<def.target-5?" · treino completo, sobra tempo":""}${s&&s.startedAt?` · treinando há <b id="elapsed">${elapsedMin(s)}</b> min`:""}${def.dropped.length?`<br>Fica de fora hoje: ${def.dropped.map(esc).join(", ")}`:""}</p></div>`:s&&s.mins?`<p class="small muted num" style="margin:8px 0 0">Duração: <b>${s.mins} min</b></p>`:""}
       <div class="row" style="margin-top:12px;justify-content:space-between"><div class="progress" style="flex:1;min-width:120px"><i style="width:${pct}%"></i></div><span class="small num">${ok}/${total} séries</span></div>
       ${done?`<p style="margin:10px 0 0"><b style="color:var(--ok)">Treino concluído.</b> <span class="muted num">Volume: ${kg(vol)} kg</span></p>`:switcher?`<div style="margin-top:10px">${switcher}</div>`:""}
     </div>
@@ -763,6 +829,8 @@ function viewPrograma(){
       <p class="small muted" style="margin:6px 0 0">${st.split==="ABC"?"ABC: cada grupo muscular a cada 3 treinos. Ideal 3× (iniciante/intermediário) ou 6× por semana (avançado, 2× frequência).":"ABCD: mais volume por grupo e mais tempo de recuperação. Ideal 4× ou 5× por semana."}</p></div>
       <div><span class="eyebrow">Dias de treino</span><div class="daypick" style="margin-top:6px">${days}</div>
       <p class="small muted" style="margin:6px 0 0">${st.days.length} dias por semana · recomendado ${p.freq}.</p></div>
+      <div><span class="eyebrow">Duração de cada treino</span><div class="durbar" style="margin-top:6px">${DURS.map(m=>`<button class="chip ${(st.duration||60)===m?"on":""}" data-act="defdur" data-m="${m}" aria-pressed="${(st.duration||60)===m}">${m} min</button>`).join("")}</div>
+      <p class="small muted" style="margin:6px 0 0">Conta aquecimento e descanso entre séries. Em treinos mais curtos o app reduz descanso e séries dos acessórios e, se precisar, deixa de fora os últimos exercícios; em treinos mais longos acrescenta séries, começando pelos exercícios principais. Dá para mudar o tempo no próprio dia, na tela de treino.</p></div>
     </div>
     <div class="card"><h2>Mesociclo de 4 semanas</h2>
       <p class="small muted" style="margin:4px 0 8px">As semanas variam automaticamente para manter o estímulo de hipertrofia. Você está na <b>semana ${ph.week} (${ph.name})</b>. RIR = repetições em reserva ao fim da série.</p>
@@ -783,12 +851,43 @@ function viewPrograma(){
 /* ---------- eventos ---------- */
 function toast(msg){const el=document.getElementById("toast");el.textContent=msg;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,2200)}
 const $timer=document.getElementById("timer");
-setInterval(()=>{
+const elapsedMin=s=>Math.max(0,Math.round((Date.now()-new Date(s.startedAt))/60000));
+let actx=null,wake=null;
+function beep(){
+  if(!UI.sound)return;
+  try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    [0,0.25,0.5].forEach((t,i)=>{const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=i===2?1320:880;o.connect(g);g.connect(actx.destination);
+      const st=actx.currentTime+t;g.gain.setValueAtTime(0.0001,st);g.gain.exponentialRampToValueAtTime(0.3,st+0.02);g.gain.exponentialRampToValueAtTime(0.0001,st+0.18);o.start(st);o.stop(st+0.2)});
+  }catch(e){}
+  try{navigator.vibrate&&navigator.vibrate([200,100,200,100,300])}catch(e){}
+}
+async function keepAwake(on){
+  try{if(on&&!wake&&navigator.wakeLock){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>wake=null)}
+    if(!on&&wake){await wake.release();wake=null}}catch(e){}
+}
+function startRest(sec,next){
+  try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume&&actx.resume()}catch(e){}
+  UI.timerTotal=sec;UI.timerEnd=Date.now()+sec*1000;UI.timerNext=next||"";
+  document.getElementById("tm-next").textContent=UI.timerNext;tickTimer();keepAwake(true);
+}
+function nextLabel(def,s,exId,i){
+  const idx=def.ex.findIndex(x=>x.id===exId);
+  const okAt=(ex,j)=>{const e=s.log[ex.id];return !!(e&&e.sets[j]&&e.sets[j].ok)};
+  for(let k=idx;k<def.ex.length;k++){const ex=def.ex[k],n=presc(ex).sets;
+    for(let j=0;j<n;j++){if(!okAt(ex,j))return k===idx?`Próxima: série ${j+1} de ${n} · ${ex.n}`:`Próximo exercício: ${ex.n} (série ${j+1} de ${n})`}}
+  for(let k=0;k<idx;k++){const ex=def.ex[k],n=presc(ex).sets;for(let j=0;j<n;j++)if(!okAt(ex,j))return `Falta: ${ex.n} (série ${j+1} de ${n})`}
+  return "Todas as séries feitas. Conclua o treino!";
+}
+function tickTimer(){
   if(!UI.timerEnd){$timer.hidden=true;return}
-  const left=Math.round((UI.timerEnd-Date.now())/1000);
-  if(left<=0){UI.timerEnd=0;$timer.hidden=true;toast("Descanso encerrado. Próxima série!");return}
-  $timer.hidden=false;$timer.innerHTML=`<span class="small">Descanso</span><b>${Math.floor(left/60)}:${pad(left%60)}</b><button data-act="t15">+15s</button><button data-act="tskip">Pular</button>`;
-},250);
+  const left=Math.ceil((UI.timerEnd-Date.now())/1000);
+  if(left<=0){UI.timerEnd=0;$timer.hidden=true;beep();toast("Descanso encerrado! "+(UI.timerNext.startsWith("Próxim")?UI.timerNext.replace(/^Próxim[ao]( exercício)?: /,""):"Bora!"));return}
+  $timer.hidden=false;$timer.classList.toggle("ending",left<=5);
+  document.getElementById("tm-time").textContent=Math.floor(left/60)+":"+pad(left%60);
+  document.getElementById("tm-bar").style.width=Math.max(0,Math.min(100,left/UI.timerTotal*100))+"%";
+  const el=document.getElementById("elapsed"); const s=S.sessions[curDate()]; if(el&&s&&s.startedAt)el.textContent=elapsedMin(s);
+}
+setInterval(tickTimer,250);
 
 function curDate(){return UI.view||today()}
 function curLetter(){const d=curDate();const s=S.sessions[d];return s?s.letter:nextLetterBefore(d)}
@@ -821,12 +920,14 @@ document.addEventListener("click",e=>{
       if(st.ok){
         if(st.kg===""&&sg.kg!=null)st.kg=String(sg.kg);
         if(st.reps==="")st.reps=String(p.r[0]);
-        UI.timerTotal=+b.dataset.rest; UI.timerEnd=Date.now()+UI.timerTotal*1000;
-      }
+        if(!s.startedAt)s.startedAt=new Date().toISOString();
+        startRest(+b.dataset.rest,nextLabel(workoutDef(s.letter,s.split,s.date),s,ex.id,i));
+      }else if(UI.timerEnd){UI.timerEnd=0;tickTimer()}
       saveSession(d); const y=window.scrollY; render(); window.scrollTo(0,y); break;}
     case "finish":{
       const s=ensureSession(d,curLetter()); s.status="done"; s.doneAt=new Date().toISOString();
-      UI.timerEnd=0; $timer.hidden=true; saveSession(d); render(); window.scrollTo(0,0);
+      if(s.startedAt&&!s.mins)s.mins=elapsedMin(s);
+      UI.timerEnd=0; $timer.hidden=true; keepAwake(false); saveSession(d); render(); window.scrollTo(0,0);
       const nx=upcoming(1)[0]; toast("Treino "+s.letter+" marcado! "+(nx?"Próximo: "+nx.letter+" em "+fmt(nx.date):"")); break;}
     case "undo":{const s=S.sessions[d]; if(s){s.status="progress";saveSession(d);render()} break;}
     case "swap":{
@@ -901,8 +1002,14 @@ document.addEventListener("click",e=>{
       const s=S.sessions[d]; const cur=S.settings.subs&&S.settings.subs[b.dataset.o];
       if(s&&cur&&s.log[cur.id]&&s.log[cur.id].sets.some(y=>y.ok)){toast("Desmarque as séries deste exercício antes de trocar");break}
       if(S.settings.subs)delete S.settings.subs[b.dataset.o]; saveSettings(); render(); break;}
-    case "t15": UI.timerEnd+=15000; break;
+    case "t15": UI.timerEnd+=15000; UI.timerTotal+=15; tickTimer(); break;
+    case "t-15": UI.timerEnd-=15000; tickTimer(); break;
     case "tskip": UI.timerEnd=0; $timer.hidden=true; break;
+    case "tmute": UI.sound=!UI.sound; b.textContent=UI.sound?"Som ligado":"Som desligado"; S.settings.sound=UI.sound; saveSettings(); break;
+    case "rest":{const s=S.sessions[d]; const def=workoutDef(s?s.letter:curLetter(),s&&s.split,d); const ex=def.ex.find(x=>x.id===b.dataset.ex);
+      startRest(+b.dataset.rest,ex?(s?nextLabel(def,s,ex.id,0):"Próxima: série 1 · "+ex.n):""); break;}
+    case "dur":{const m=+b.dataset.m; const s=S.sessions[d]; if(s){s.dur=m;saveSession(d)}else UI.durPick[d]=m; const y=window.scrollY; render(); window.scrollTo(0,y); break;}
+    case "defdur": S.settings.duration=+b.dataset.m; saveSettings(); render(); break;
   }
 });
 
@@ -917,7 +1024,7 @@ document.addEventListener("keydown",e=>{
   if(e.target.id==="askq"&&e.key==="Enter"&&!e.shiftKey){e.preventDefault();document.getElementById("askform").requestSubmit()}
 });
 
-store.loadLocal(); render(); store.init(); aiInit();
+store.loadLocal(); UI.sound=S.settings.sound!==false; document.getElementById("tm-mute").textContent=UI.sound?"Som ligado":"Som desligado"; render(); store.init(); aiInit();
 })();
 </script>
 
