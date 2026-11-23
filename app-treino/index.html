@@ -399,7 +399,12 @@ function planFor(date){
   const u=upcoming(60).find(x=>x.date===date); return u?{letter:u.letter}:null;
 }
 function applySub(ex){const s=S.settings.subs&&S.settings.subs[ex.id];return s?Object.assign({},ex,{id:s.id,n:s.n,tip:s.tip||"",orig:ex.id,origN:ex.n}):ex}
-function workoutDef(letter,split){const p=PROGRAMS[split||S.settings.split];const w=p.days[letter]||p.days[Object.keys(p.days)[0]];return{t:w.t,ex:w.ex.map(applySub)}}
+function customFor(split,date){const c=S.settings.custom;if(!c||!c.active||c.split!==split||!date)return null;return c.weeks[phaseOf(date).i]||null}
+function workoutDef(letter,split,date){
+  split=split||S.settings.split;
+  const wk=customFor(split,date); if(wk&&wk[letter])return{t:wk[letter].t,ex:wk[letter].ex.map(applySub),custom:true};
+  const p=PROGRAMS[split];const w=p.days[letter]||p.days[Object.keys(p.days)[0]];return{t:w.t,ex:w.ex.map(applySub)}}
+function logItems(s){return Object.entries(s.log||{}).map(([id,e])=>({id,n:e.n||id,ok:setsOf(e).filter(x=>x.ok)})).filter(x=>x.ok.length)}
 
 /* ---------- IA (Claude via capacidade "sample") ---------- */
 const AI={fn:null,busy:false,out:"",err:"",chat:[],chatBusy:false,chatErr:"",alt:null};
@@ -424,10 +429,10 @@ function aiErr(e){const c=e&&e.code;
   return"Não foi possível falar com a IA agora. Tente de novo em instantes.";}
 function aiContext(){
   const t=today(),ph=phaseOf(t),p=prog();
-  const plan=Object.entries(p.days).map(([l,w])=>{const d=workoutDef(l);return `Treino ${l} (${w.t}): `+d.ex.map(ex=>{const pr=presc(ex,ph);return `${ex.n} ${pr.sets}x${pr.r[0]}-${pr.r[1]}`}).join("; ")}).join("\n");
+  const plan=Object.keys(p.days).map(l=>{const d=workoutDef(l,null,t);return `Treino ${l} (${d.t}): `+d.ex.map(ex=>{const pr=presc(ex,ph);return `${ex.n} ${pr.sets}x${pr.r[0]}-${pr.r[1]}`}).join("; ")}).join("\n");
   const dl=doneList().slice(-14);
-  const hist=dl.length?dl.map(s=>{const d=workoutDef(s.letter,s.split);
-    const ex=d.ex.map(e=>{const ok=setsOf(s.log[e.id]).filter(x=>x.ok);return ok.length?`${e.n}: ${ok.map(x=>(x.kg||"?")+"kg x"+(x.reps||"?")).join(", ")}`:null}).filter(Boolean);
+  const hist=dl.length?dl.map(s=>{
+    const ex=logItems(s).map(e=>`${e.n}: ${e.ok.map(x=>(x.kg||"?")+"kg x"+(x.reps||"?")).join(", ")}`);
     return `${s.date} Treino ${s.letter} (semana ${(s.ph!=null?s.ph:phaseOf(s.date).i)+1} ${PHASES[s.ph!=null?s.ph:phaseOf(s.date).i].name})${s.quick?" [marcado sem registro de cargas]":""}\n  `+(ex.join("\n  ")||"sem cargas registradas")}).join("\n"):"Nenhum treino concluído ainda.";
   const from=addDays(mondayOf(t),-28);const planned=S.settings.days.length*4;
   const done4=doneList().filter(s=>s.date>=from&&s.date<mondayOf(t)).length;
@@ -474,10 +479,10 @@ async function askCoach(q){
 async function findAlternatives(exId,reason){
   if(!AI.fn)return;
   const s=S.sessions[curDate()];const letter=s?s.letter:curLetter();
-  const ex=workoutDef(letter,s&&s.split).ex.find(x=>x.id===exId); if(!ex)return;
+  const ex=workoutDef(letter,s&&s.split,curDate()).ex.find(x=>x.id===exId); if(!ex)return;
   AI.alt={exId,reason,loading:true,list:null,err:""};render();
-  const others=workoutDef(letter,s&&s.split).ex.map(x=>x.n).join(", ");
-  const prompt=`Você é um treinador de musculação especialista em hipertrofia. Sugira 3 exercícios para substituir "${ex.n}" no Treino ${letter} (${workoutDef(letter).t}). Motivo da troca: ${reason}. Os outros exercícios do treino são: ${others} (não repita nenhum deles). A substituição deve trabalhar o mesmo grupo muscular com padrão de movimento parecido e caber na prescrição de ${ex.s} séries de ${ex.r[0]}-${ex.r[1]} repetições. ${/dor/i.test(reason)?"Priorize opções com menor estresse articular e amplitude controlável.":""}
+  const wd=workoutDef(letter,s&&s.split,curDate());const others=wd.ex.map(x=>x.n).join(", ");
+  const prompt=`Você é um treinador de musculação especialista em hipertrofia. Sugira 3 exercícios para substituir "${ex.n}" no Treino ${letter} (${wd.t}). Motivo da troca: ${reason}. Os outros exercícios do treino são: ${others} (não repita nenhum deles). A substituição deve trabalhar o mesmo grupo muscular com padrão de movimento parecido e caber na prescrição de ${ex.s} séries de ${ex.r[0]}-${ex.r[1]} repetições. ${/dor/i.test(reason)?"Priorize opções com menor estresse articular e amplitude controlável.":""}
 Responda SOMENTE com JSON no formato: {"alternativas":[{"nome":"nome do exercício em português","porque":"uma frase curta explicando a escolha","dica":"uma dica curta de execução"}]}`;
   try{
     const r=await AI.fn.json(prompt,{modelTier:"quick"});
@@ -497,11 +502,95 @@ function altBox(ex){
   else body=`<span class="small muted">Motivo: ${esc(a.reason)}</span>`+a.list.map((x,i)=>`<div class="alt"><div style="min-width:0"><b>${esc(x.nome)}</b><div class="small muted">${esc(x.porque||"")}</div></div><button class="btn" data-act="altuse" data-ex="${ex.id}" data-i="${i}">Usar</button></div>`).join("");
   return `<div class="altbox"><div class="row" style="justify-content:space-between"><b class="small">Alternativas com IA</b><button class="btn ghost" style="padding:2px 8px" data-act="altclose" aria-label="Fechar">✕</button></div>${body}</div>`;
 }
+/* ---------- Plano do mês com IA: exercícios diferentes em cada semana do ciclo ---------- */
+AI.mp={prefs:{equip:"Academia completa",time:"60 min",level:"Intermediário",focus:[],notes:""},busy:false,step:0,draft:null,err:"",view:0};
+const MP_OPTS={equip:["Academia completa","Academia básica","Em casa com halteres"],time:["45 min","60 min","75+ min"],level:["Iniciante","Intermediário","Avançado"],
+  focus:["Peito","Costas","Ombros","Braços","Quadríceps","Posteriores e glúteos","Panturrilha","Abdômen"]};
+const slugify=t=>String(t).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,48);
+const clampN=(v,a,b,d)=>{v=Math.round(+v);return isFinite(v)?Math.min(b,Math.max(a,v)):d};
+function normWeek(r,L){
+  const tr=r&&r.treinos; if(!tr)throw{code:"invalid_json"};
+  const out={};
+  for(const l of L){
+    const w=tr[l]; if(!w||!Array.isArray(w.exercicios)||w.exercicios.length<3)throw{code:"invalid_json"};
+    const seen=new Set(); const ex=[];
+    for(const x of w.exercicios.slice(0,8)){
+      if(!x||!x.nome)continue; const n=String(x.nome).slice(0,80); let id=slugify(n)||"ex";
+      if(seen.has(id))continue; seen.add(id);
+      let a=clampN(x.reps_min,4,25,8),b=clampN(x.reps_max,4,30,12); if(b<a)[a,b]=[b,a];
+      const comp=!!x.composto; const legs=/agach|leg|stiff|terra|p[eé]lvic|panturr|hack|b[uú]lgar|afundo|passada|levantamento/i.test(n);
+      ex.push({id,n,s:clampN(x.series,2,5,3),r:[a,b],rest:clampN(x.descanso_s,30,240,90),comp,inc:legs?5:comp?2.5:1,tip:String(x.dica||"").slice(0,200)});
+    }
+    if(ex.length<3)throw{code:"invalid_json"};
+    out[l]={t:String(w.titulo||PROGRAMS[S.settings.split].days[l].t).slice(0,60),ex};
+  }
+  return out;
+}
+async function genMonth(){
+  if(!AI.fn||AI.mp.busy)return;
+  const split=S.settings.split, L=letters(), pf=AI.mp.prefs, base=PROGRAMS[split].days;
+  const nEx=pf.time==="45 min"?5:pf.time==="60 min"?6:7;
+  AI.mp.busy=true;AI.mp.err="";AI.mp.step=0;AI.mp.draft={split,name:"",weeks:[]};AI.mp.view=0;render();
+  try{
+    for(let w=0;w<4;w++){
+      AI.mp.step=w+1;render();
+      const ph=PHASES[w]; const prev=AI.mp.draft.weeks;
+      const keep=prev.length?L.map(l=>`Treino ${l}: `+prev[0][l].ex.slice(0,2).map(e=>e.n).join(" e ")).join("\n"):"";
+      const used=prev.length?L.map(l=>`Treino ${l}: `+prev.map(wk=>wk[l].ex.slice(2).map(e=>e.n).join(", ")).join(" | ")).join("\n"):"";
+      const prompt=`Você é um treinador de musculação (CREF) especialista em hipertrofia montando a SEMANA ${w+1} de 4 de um plano mensal com exercícios variados.
+Divisão ${split}, ${S.settings.days.length} treinos por semana. Grupos musculares de cada treino (mantenha):
+${L.map(l=>`Treino ${l}: ${base[l].t}`).join("\n")}
+Aluno: nível ${pf.level}; local: ${pf.equip}; tempo por treino: ${pf.time}.${pf.focus.length?" Prioridade de grupos: "+pf.focus.join(", ")+" (dê um exercício a mais ou mais séries para eles).":""}${pf.notes?" Observações do aluno: "+pf.notes.slice(0,400):""}
+Fase desta semana no ciclo: ${ph.name}. O app aplica sozinho os ajustes da fase (volume +1 série, intensidade -2 reps, deload -40%), então informe a prescrição BASE.
+Regras:
+- ${nEx} exercícios por treino, do composto para o isolado. Use apenas equipamentos disponíveis em "${pf.equip}".
+- Os 2 primeiros exercícios de cada treino são os principais compostos e devem ser IGUAIS em todas as semanas, para acompanhar a progressão de carga.${keep?"\n- Use exatamente estes exercícios principais (mesmos nomes):\n"+keep:""}
+- Os demais exercícios devem VARIAR em relação às semanas anteriores (outro ângulo, pegada ou equipamento para o mesmo músculo).${used?"\n- Acessórios já usados (não repita nesta semana):\n"+used:""}
+- Séries base entre 2 e 4; repetições entre 6 e 15 (compostos 6-10, isolados 10-15); descanso em segundos (compostos 90-150, isolados 45-75).
+- Nomes de exercícios em português, como são conhecidos nas academias do Brasil.
+Responda SOMENTE com JSON:
+{"nome_plano":"nome curto e motivador para o plano do mês","treinos":{${L.map(l=>`"${l}":{"titulo":"grupos musculares","exercicios":[{"nome":"","series":3,"reps_min":8,"reps_max":12,"descanso_s":90,"composto":true,"dica":"dica curta de execução"}]}`).join(",")}}}`;
+      const r=await AI.fn.json(prompt,{cache:false});
+      const wk=normWeek(r,L);
+      if(w===0)AI.mp.draft.name=String(r.nome_plano||"Plano do mês").slice(0,60);
+      AI.mp.draft.weeks.push(wk);
+    }
+  }catch(e){AI.mp.err=aiErr(e);AI.mp.draft=null}
+  AI.mp.busy=false;render();
+}
+function viewMonthPlan(){
+  const m=AI.mp, pf=m.prefs, st=S.settings;
+  const cu=st.custom&&st.custom.active?st.custom:null;
+  const opt=(k,label)=>`<div><span class="eyebrow">${label}</span><div class="ai-chips" style="margin-top:6px">${MP_OPTS[k].map(v=>`<button class="${(k==="focus"?pf.focus.includes(v):pf[k]===v)?"chip on":""}" data-act="mp-opt" data-k="${k}" data-v="${v}" aria-pressed="${k==="focus"?pf.focus.includes(v):pf[k]===v}">${v}</button>`).join("")}</div></div>`;
+  let body="";
+  if(m.busy){
+    body=`<div class="stack"><span class="ai-wait">Montando a semana ${m.step} de 4…</span><div class="progress"><i style="width:${(m.step-1)*25}%"></i></div><span class="small muted">Leva cerca de 1 minuto. Pode continuar usando o app.</span></div>`;
+  }else if(m.draft&&m.draft.weeks.length===4){
+    const wk=m.draft.weeks[m.view];
+    body=`<div class="stack"><div><span class="eyebrow">Prévia · divisão ${m.draft.split}</span><h3 style="margin-top:2px">${esc(m.draft.name)}</h3></div>
+      <div class="seg">${[0,1,2,3].map(i=>`<button class="${m.view===i?"on":""}" data-act="mp-week" data-i="${i}">Sem. ${i+1}</button>`).join("")}</div>
+      <p class="small muted" style="margin:0">Semana ${m.view+1} · ${PHASES[m.view].name}. Os 2 primeiros exercícios se repetem no mês; os outros variam.</p>
+      ${Object.entries(wk).map(([l,w])=>`<div><div class="row">${plate(l,1)}<b>Treino ${l} — ${esc(w.t)}</b></div><ul class="exlist">${w.ex.map(ex=>`<li><span>${esc(ex.n)}</span><span>${ex.s}×${ex.r[0]}–${ex.r[1]} · ${ex.rest}s</span></li>`).join("")}</ul></div>`).join("")}
+      <button class="btn primary" data-act="mp-activate">Ativar este plano</button>
+      <div class="row"><button class="btn" data-act="mp-gen">Gerar outro</button><button class="btn ghost" data-act="mp-discard">Descartar</button></div></div>`;
+  }else{
+    body=`<div class="stack">${opt("equip","Onde você treina")}${opt("time","Tempo por treino")}${opt("level","Nível")}${opt("focus","Prioridades (opcional)")}
+      <div><label class="eyebrow" for="mpnotes">Observações (opcional)</label><textarea id="mpnotes" style="font:inherit;font-size:.9rem;min-height:60px;margin-top:6px" placeholder="Ex.: dor no joelho, não gosto de agachamento livre">${esc(pf.notes)}</textarea></div>
+      ${m.err?`<div class="ai-err">${esc(m.err)}</div>`:""}
+      <button class="btn primary" data-act="mp-gen">Gerar plano do mês (divisão ${st.split})</button></div>`;
+  }
+  return `<div class="card stack">
+    <div><h2>Plano do mês</h2><p class="small muted" style="margin:4px 0 0">A IA monta 4 semanas com exercícios diferentes, uma para cada fase do ciclo. Os exercícios principais se mantêm para você acompanhar a evolução das cargas.</p></div>
+    ${cu?`<div class="row" style="justify-content:space-between;background:var(--sunk);border-radius:10px;padding:10px 12px"><span class="small"><b>Ativo:</b> ${esc(cu.name)} · ${cu.split}${cu.split!==st.split?` <span class="muted">(mude para ${cu.split} em Programa para usar)</span>`:""}</span><span class="row"><button class="btn ghost" data-act="tab-programa">Ver</button><button class="btn ghost danger" data-act="custom-off">Desativar</button></span></div>`:""}
+    ${body}</div>`;
+}
+
 function viewCoach(){
   const chips=["Tenho só 40 minutos hoje, como encurto o treino?","Estagnei no supino, o que fazer?","Senti dor no ombro no treino de empurrar","Estou dormindo mal, devo mudar algo?","Quanto de proteína devo comer por dia?"];
   const chat=AI.chat.map((m,i)=>m.role==="user"?`<div class="msg me">${esc(m.content)}</div>`:`<div class="msg ai ai-out" ${i===AI.chat.length-1?'id="ai-last"':""}>${m.content?md(m.content):'<span class="ai-wait">Pensando…</span>'}</div>`).join("");
   return `<div class="stack">
     <div class="row" style="justify-content:space-between"><h1>Coach IA</h1><span class="sync">${syncNote()}</span></div>
+    ${viewMonthPlan()}
     <div class="card stack">
       <div><h2>Análise do seu progresso</h2><p class="small muted" style="margin:4px 0 0">A IA lê seu programa, a fase do ciclo e os últimos 14 treinos com cargas e repetições, e diz o que ajustar.</p></div>
       ${AI.out||AI.busy?`<div class="ai-out" id="ai-an">${AI.out?md(AI.out):'<span class="ai-wait">Analisando seus treinos…</span>'}</div>`:""}
@@ -552,7 +641,7 @@ function viewHoje(){
       ${nx?`<div class="row">${plate(nx.letter,1)}<span>Próximo: <b>Treino ${nx.letter}</b> em ${fmt(nx.date)} · ${nx.ph.name}</span></div>`:""}
       <button class="btn" data-act="force" data-l="${L}">Treinar hoje mesmo assim (Treino ${L})</button></div></div>`;
   }
-  const def=workoutDef(letter,s&&s.split);
+  const def=workoutDef(letter,s&&s.split,date);
   const done=s&&s.status==="done";
   let total=0,ok=0,vol=0;
   const cards=def.ex.map((ex,n)=>{
@@ -580,7 +669,7 @@ function viewHoje(){
   const switcher=!done?`<div class="row" role="group" aria-label="Trocar treino"><span class="small muted">Trocar:</span>${L.map(l=>`<button class="chip ${l===letter?"on":""}" data-act="swap" data-l="${l}">${l}</button>`).join("")}</div>`:"";
   return `<div class="stack">${head}
     ${!isToday?`<button class="btn ghost" data-act="backtoday">← Voltar para hoje</button>`:""}
-    <div class="card"><div class="top">${plate(letter)}<div class="meta"><h1>Treino ${letter}</h1><div class="muted">${def.t}</div></div></div>
+    <div class="card"><div class="top">${plate(letter)}<div class="meta"><h1>Treino ${letter}</h1><div class="muted">${esc(def.t)}</div>${def.custom?`<span class="chip" style="margin-top:4px">Plano do mês · IA</span>`:""}</div></div>
       ${phaseBar(ph)}
       <p class="small" style="margin:8px 0 0"><b>Semana ${ph.week} de 4 · ${ph.name}.</b> <span class="muted">${ph.note}</span></p>
       <div class="row" style="margin-top:12px;justify-content:space-between"><div class="progress" style="flex:1;min-width:120px"><i style="width:${pct}%"></i></div><span class="small num">${ok}/${total} séries</span></div>
@@ -613,7 +702,7 @@ function viewAgenda(){
   const wk=mondayOf(t); const weekDone=dl.filter(s=>s.date>=wk&&s.date<=addDays(wk,6)).length;
   let streak=0,w=mondayOf(t); if(weekDone<S.settings.days.length)w=addDays(w,-7);
   for(let k=0;k<52;k++){const n=dl.filter(s=>s.date>=w&&s.date<=addDays(w,6)).length;if(n>=S.settings.days.length){streak++;w=addDays(w,-7)}else break}
-  const next=up.slice(0,6).map(u=>`<button data-act="day" data-d="${u.date}">${plate(u.letter,1)}<span class="meta"><b>${u.date===t?"Hoje":fmt(u.date)}</b> · Treino ${u.letter} <span class="muted">— ${workoutDef(u.letter).t}</span><br><span class="small muted">Semana ${u.ph.week} · ${u.ph.name} · RIR ${u.ph.rir}</span></span></button>`).join("");
+  const next=up.slice(0,6).map(u=>`<button data-act="day" data-d="${u.date}">${plate(u.letter,1)}<span class="meta"><b>${u.date===t?"Hoje":fmt(u.date)}</b> · Treino ${u.letter} <span class="muted">— ${workoutDef(u.letter,null,u.date).t}</span><br><span class="small muted">Semana ${u.ph.week} · ${u.ph.name} · RIR ${u.ph.rir}</span></span></button>`).join("");
   return `<div class="stack">
     <div class="row" style="justify-content:space-between"><h1>Agenda</h1><span class="sync">${syncNote()}</span></div>
     <div class="stats">
@@ -635,8 +724,8 @@ function dayDetail(d,upMap){
   const t=today(); const s=S.sessions[d];
   let body="";
   if(s){
-    const def=workoutDef(s.letter,s.split);
-    const items=def.ex.map(ex=>{const e=s.log[ex.id];const ok=setsOf(e).filter(x=>x.ok);return `<li><span>${ex.n}</span><span>${ok.length?ok.map(x=>(x.kg===""?"—":kg(+x.kg))+"×"+(x.reps===""?"?":x.reps)).join("  "):"—"}</span></li>`}).join("");
+    const li=logItems(s);
+    const items=li.length?li.map(e=>`<li><span>${esc(e.n)}</span><span>${e.ok.map(x=>(x.kg===""?"—":kg(+x.kg))+"×"+(x.reps===""?"?":x.reps)).join("  ")}</span></li>`).join(""):`<li><span class="muted">${s.quick?"Marcado sem registro de cargas":"Nenhuma série concluída"}</span><span></span></li>`;
     body=`<div class="row">${plate(s.letter,1)}<b>Treino ${s.letter} ${s.status==="done"?"concluído":"em andamento"}</b></div>
       <ul class="exlist">${items}</ul>
       <div class="row" style="margin-top:10px"><button class="btn" data-act="open" data-d="${d}">Abrir registro</button><button class="btn danger" data-act="del" data-d="${d}">Remover marcação</button></div>`;
@@ -645,10 +734,10 @@ function dayDetail(d,upMap){
     body=`<p style="margin:0 0 8px" class="muted">Nenhum treino registrado. Treinou neste dia? Marque qual foi:</p>
       <div class="row">${letters().map(l=>`<button class="btn ${l===L?"primary":""}" data-act="mark" data-d="${d}" data-l="${l}">Treino ${l}</button>`).join("")}</div>`;
   }else if(upMap[d]){
-    const u=upMap[d]; const def=workoutDef(u.letter);
+    const u=upMap[d]; const def=workoutDef(u.letter,null,d);
     body=`<div class="row">${plate(u.letter,1)}<b>Sugerido: Treino ${u.letter} · ${def.t}</b></div>
       <p class="small muted" style="margin:6px 0">Semana ${u.ph.week} · ${u.ph.name} — ${u.ph.note}</p>
-      <ul class="exlist">${def.ex.map(ex=>{const p=presc(ex,u.ph);return `<li><span>${ex.n}</span><span>${p.sets}×${p.r[0]}–${p.r[1]}</span></li>`}).join("")}</ul>
+      <ul class="exlist">${def.ex.map(ex=>{const p=presc(ex,u.ph);return `<li><span>${esc(ex.n)}</span><span>${p.sets}×${p.r[0]}–${p.r[1]}</span></li>`}).join("")}</ul>
       ${d===t?`<button class="btn primary" style="margin-top:10px" data-act="gotoday">Começar treino</button>`:""}`;
   }else body=`<p class="muted" style="margin:0">Dia de descanso.</p>`;
   return `<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>${fmt(d,"long")}</h3><button class="btn ghost" data-act="close" aria-label="Fechar">✕</button></div>${body}</div>`;
@@ -657,8 +746,15 @@ function dayDetail(d,upMap){
 function viewPrograma(){
   const st=S.settings; const p=prog(); const ph=phaseOf(today());
   const days=WD_ORDER.map(d=>`<button class="${st.days.includes(d)?"on":""}" data-act="wd" data-w="${d}" aria-pressed="${st.days.includes(d)}">${WD[d]}</button>`).join("");
-  const workouts=Object.entries(p.days).map(([l,w])=>`<details class="card"${l==="A"?" open":""}><summary><span class="row" style="display:inline-flex">${plate(l,1)} Treino ${l} — ${w.t}</span></summary>
-    <ul class="exlist">${w.ex.map(ex=>`<li><span>${ex.n}</span><span>${ex.s}×${ex.r[0]}–${ex.r[1]} · ${ex.rest}s</span></li>`).join("")}</ul></details>`).join("");
+  const cu=st.custom&&st.custom.active&&st.custom.split===st.split?st.custom:null;
+  if(UI.pweek==null)UI.pweek=ph.i;
+  const src=cu?cu.weeks[UI.pweek]:p.days;
+  const workouts=(cu?`<div class="card stack"><div><span class="eyebrow">Plano do mês · criado com IA</span><h2 style="margin-top:2px">${esc(cu.name||"Plano personalizado")}</h2><p class="small muted" style="margin:4px 0 0">Exercícios diferentes em cada semana do ciclo. Veja a semana:</p></div>
+      <div class="seg">${[0,1,2,3].map(i=>`<button class="${UI.pweek===i?"on":""}" data-act="pweek" data-i="${i}">Sem. ${i+1}${i===ph.i?" •":""}</button>`).join("")}</div>
+      <div class="row"><button class="btn ghost" data-act="tab-coach">Editar no Coach IA</button><button class="btn danger" data-act="custom-off">Voltar ao programa padrão</button></div></div>`:
+      (st.custom&&st.custom.split!==st.split?`<p class="small muted" style="margin:0">Seu plano do mês com IA foi feito para a divisão ${st.custom.split}. Volte para ${st.custom.split} para usá-lo.</p>`:""))+
+    Object.entries(src).map(([l,w])=>`<details class="card"${l==="A"?" open":""}><summary><span class="row" style="display:inline-flex">${plate(l,1)} Treino ${l} — ${esc(w.t)}</span></summary>
+    <ul class="exlist">${w.ex.map(ex=>`<li><span>${esc(ex.n)}</span><span>${ex.s}×${ex.r[0]}–${ex.r[1]} · ${ex.rest}s</span></li>`).join("")}</ul></details>`).join("");
   const rows=PHASES.map((x,i)=>`<tr class="${i===ph.i?"cur":""}"><td class="num"><b>${i+1}</b></td><td><b>${x.name}</b></td><td>${x.k==="vol"?"+1":x.k==="del"?"−40%":"base"}</td><td>${x.shift?"−2":"base"}</td><td>${x.k==="int"?"+5%":x.k==="del"?"−40%":"progressão"}</td><td class="num">${x.rir}</td></tr>`).join("");
   return `<div class="stack">
     <div class="row" style="justify-content:space-between"><h1>Programa</h1><span class="sync">${syncNote()}</span></div>
@@ -698,12 +794,13 @@ function curDate(){return UI.view||today()}
 function curLetter(){const d=curDate();const s=S.sessions[d];return s?s.letter:nextLetterBefore(d)}
 
 document.addEventListener("input",e=>{
-  const el=e.target; if(!el.dataset||!el.dataset.ex)return;
+  const el=e.target; if(el.id==="mpnotes"){AI.mp.prefs.notes=el.value;return}
+  if(!el.dataset||!el.dataset.ex)return;
   const d=curDate(); const s=ensureSession(d,curLetter());
-  const ph=PHASES[s.ph]; const ex=workoutDef(s.letter,s.split).ex.find(x=>x.id===el.dataset.ex);
+  const ph=PHASES[s.ph]; const ex=workoutDef(s.letter,s.split,s.date).ex.find(x=>x.id===el.dataset.ex);
   const p=presc(ex,ph);
   const e2=s.log[ex.id]||(s.log[ex.id]={top:p.r[1],sets:[]});
-  e2.top=p.r[1];
+  e2.top=p.r[1]; e2.n=ex.n;
   const i=+el.dataset.i; while(e2.sets.length<=i)e2.sets.push({kg:"",reps:"",ok:false});
   e2.sets[i][el.dataset.f]=el.value.replace(",",".").replace(/[^\d.]/g,"");
   saveSession(d);
@@ -716,9 +813,9 @@ document.addEventListener("click",e=>{
   const d=curDate();
   switch(a){
     case "set":{
-      const s=ensureSession(d,curLetter()); const ex=workoutDef(s.letter,s.split).ex.find(x=>x.id===b.dataset.ex);
+      const s=ensureSession(d,curLetter()); const ex=workoutDef(s.letter,s.split,s.date).ex.find(x=>x.id===b.dataset.ex);
       const ph=PHASES[s.ph]; const p=presc(ex,ph); const sg=suggest(ex,d,Object.assign({i:s.ph},ph));
-      const e2=s.log[ex.id]||(s.log[ex.id]={top:p.r[1],sets:[]}); e2.top=p.r[1];
+      const e2=s.log[ex.id]||(s.log[ex.id]={top:p.r[1],sets:[]}); e2.top=p.r[1]; e2.n=ex.n;
       const i=+b.dataset.i; while(e2.sets.length<=i)e2.sets.push({kg:"",reps:"",ok:false});
       const st=e2.sets[i]; st.ok=!st.ok;
       if(st.ok){
@@ -773,6 +870,19 @@ document.addEventListener("click",e=>{
       }catch(err){msg.textContent="Esse código não é um backup válido. Cole o texto completo gerado em “Copiar backup”."}
       break;}
     case "analyze": runAnalysis(); break;
+    case "mp-opt":{const k=b.dataset.k,v=b.dataset.v,pf=AI.mp.prefs;
+      if(k==="focus"){const i=pf.focus.indexOf(v);if(i>=0)pf.focus.splice(i,1);else pf.focus.push(v)}else pf[k]=v; render(); break;}
+    case "mp-gen": genMonth(); break;
+    case "mp-week": AI.mp.view=+b.dataset.i; render(); break;
+    case "mp-discard": AI.mp.draft=null; render(); break;
+    case "mp-activate":{const dr=AI.mp.draft; if(!dr)break;
+      S.settings.custom={active:true,split:dr.split,name:dr.name,created:today(),weeks:dr.weeks};
+      if(S.settings.split!==dr.split){S.settings.split=dr.split;S.settings.days=PROGRAMS[dr.split].defDays.slice()}
+      AI.mp.draft=null; UI.pweek=null; saveSettings(); render(); window.scrollTo(0,0); toast("Plano do mês ativado"); break;}
+    case "custom-off": if(S.settings.custom){S.settings.custom.active=false;saveSettings();UI.pweek=null;render();toast("Voltou ao programa padrão")} break;
+    case "pweek": UI.pweek=+b.dataset.i; render(); break;
+    case "tab-coach": UI.tab="coach"; render(); window.scrollTo(0,0); break;
+    case "tab-programa": UI.tab="programa"; UI.pweek=null; render(); window.scrollTo(0,0); break;
     case "askchip": askCoach(b.dataset.q); break;
     case "clearchat": AI.chat=[]; AI.chatErr=""; render(); break;
     case "alt": AI.alt=AI.alt&&AI.alt.exId===b.dataset.ex?null:{exId:b.dataset.ex}; render(); break;
@@ -780,7 +890,7 @@ document.addEventListener("click",e=>{
     case "altwhy": findAlternatives(b.dataset.ex,b.dataset.r); break;
     case "altuse":{
       const a=AI.alt; if(!a||!a.list)break; const x=a.list[+b.dataset.i];
-      const s=S.sessions[d]; const def=workoutDef(s?s.letter:curLetter(),s&&s.split); const ex=def.ex.find(e=>e.id===b.dataset.ex); if(!ex)break;
+      const s=S.sessions[d]; const def=workoutDef(s?s.letter:curLetter(),s&&s.split,d); const ex=def.ex.find(e=>e.id===b.dataset.ex); if(!ex)break;
       if(s&&s.log[ex.id]&&s.log[ex.id].sets.some(y=>y.ok)){toast("Desmarque as séries deste exercício antes de trocar");break}
       const orig=ex.orig||ex.id; S.settings.subs=S.settings.subs||{};
       const slug=x.nome.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,40);
