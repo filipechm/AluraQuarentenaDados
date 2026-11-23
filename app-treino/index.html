@@ -36,6 +36,7 @@
   --accent:#6b93ff; --accent-ink:#0b1220; --ok:#3fbf7f; --warn:#f0a246;
   --pA:#ef5a4f; --pB:#6b93ff; --pC:#f2b928; --pD:#3fbf7f; --pInk:#0b1220; --pCInk:#1b1400; color-scheme:dark}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.45;margin:0}
 .wrap{max-width:720px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 150px}
 h1,h2,h3{font-family:var(--display);font-weight:700;letter-spacing:.01em;margin:0;text-wrap:balance}
@@ -152,6 +153,29 @@ nav.tabs button.on{color:var(--accent)}
 .timer button{border:0;border-radius:999px;padding:6px 12px;background:var(--bg);color:var(--ink);font-weight:600;font-size:.8rem}
 .toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(16px + env(safe-area-inset-top,0px));background:var(--ok);color:#fff;padding:10px 16px;border-radius:10px;font-weight:600;z-index:7}
 .sync{font-size:.72rem;color:var(--muted)}
+/* IA */
+.ai-out{font-size:.92rem;line-height:1.55}
+.ai-out h4{font-family:var(--display);font-size:1.15rem;margin:14px 0 4px;font-weight:700}
+.ai-out h4:first-child{margin-top:0}
+.ai-out p{margin:6px 0}
+.ai-out ul{margin:4px 0;padding-left:20px}
+.ai-out li{margin:3px 0}
+.ai-wait{color:var(--muted);font-style:italic}
+.ai-err{color:var(--pA);font-size:.88rem}
+.ai-chips{display:flex;flex-wrap:wrap;gap:6px}
+.ai-chips button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:.82rem;font-weight:500}
+.msg{padding:10px 12px;border-radius:10px;max-width:92%}
+.msg.me{background:var(--accent);color:var(--accent-ink);align-self:flex-end}
+.msg.ai{background:var(--sunk);align-self:flex-start}
+.chat{display:flex;flex-direction:column;gap:8px}
+.ask{display:flex;gap:8px;align-items:flex-end}
+.ask textarea{min-height:44px;font:inherit;font-size:.92rem;flex:1}
+.altbtn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:5px 10px;font-size:.78rem;font-weight:600;color:var(--accent);flex:none}
+.altbox{margin:0 14px 12px;padding:10px;border:1px dashed var(--line);border-radius:10px;display:flex;flex-direction:column;gap:8px}
+.alt{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)}
+.alt:first-of-type{border-top:0}
+.subnote{font-size:.78rem;color:var(--muted);margin-top:2px}
+.subnote button{border:0;background:none;color:var(--accent);font-weight:600;padding:0;font-size:.78rem}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 @media (max-width:420px){h1{font-size:1.8rem}.stat b{font-size:1.4rem}.set{grid-template-columns:22px 1fr 1fr 44px;gap:6px;padding:8px 10px}}
 </style>
@@ -162,6 +186,7 @@ nav.tabs button.on{color:var(--accent)}
 <nav class="tabs" aria-label="Seções"><div class="in">
   <button data-tab="hoje" class="on"><svg viewBox="0 0 24 24"><path d="M6 7v10M18 7v10M3 10v4M21 10v4M6 12h12"/></svg>Treino</button>
   <button data-tab="agenda"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Agenda</button>
+  <button data-tab="coach" id="tab-coach" hidden><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>Coach IA</button>
   <button data-tab="programa"><svg viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M9 10h6M9 14h6M9 18h3"/></svg>Programa</button>
 </div></nav>
 
@@ -373,7 +398,127 @@ function planFor(date){
   if(date<today())return null;
   const u=upcoming(60).find(x=>x.date===date); return u?{letter:u.letter}:null;
 }
-function workoutDef(letter,split){const p=PROGRAMS[split||S.settings.split];return p.days[letter]||p.days[Object.keys(p.days)[0]]}
+function applySub(ex){const s=S.settings.subs&&S.settings.subs[ex.id];return s?Object.assign({},ex,{id:s.id,n:s.n,tip:s.tip||"",orig:ex.id,origN:ex.n}):ex}
+function workoutDef(letter,split){const p=PROGRAMS[split||S.settings.split];const w=p.days[letter]||p.days[Object.keys(p.days)[0]];return{t:w.t,ex:w.ex.map(applySub)}}
+
+/* ---------- IA (Claude via capacidade "sample") ---------- */
+const AI={fn:null,busy:false,out:"",err:"",chat:[],chatBusy:false,chatErr:"",alt:null};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function md(t){
+  const lines=esc(t).split(/\n/);let h="",inList=false;
+  const inline=s=>s.replace(/\*\*(.+?)\*\*/g,"<b>$1</b>");
+  for(const raw of lines){const l=raw.trim();
+    const li=l.match(/^(?:[-*•]|\d+[.)])\s+(.*)/);
+    if(li){if(!inList){h+="<ul>";inList=true}h+="<li>"+inline(li[1])+"</li>";continue}
+    if(inList){h+="</ul>";inList=false}
+    if(!l)continue;
+    const hd=l.match(/^#{1,4}\s+(.*)/);
+    h+=hd?"<h4>"+inline(hd[1])+"</h4>":"<p>"+inline(l)+"</p>";
+  }
+  return h+(inList?"</ul>":"");
+}
+function aiErr(e){const c=e&&e.code;
+  if(c==="not_granted")return"O acesso à IA foi recusado. Para ativar, abra o menu de permissões do app.";
+  if(c==="rate_limited")return"Muitas solicitações seguidas. Espere um minuto e tente de novo.";
+  if(c==="invalid_json")return"A resposta veio incompleta. Tente de novo.";
+  return"Não foi possível falar com a IA agora. Tente de novo em instantes.";}
+function aiContext(){
+  const t=today(),ph=phaseOf(t),p=prog();
+  const plan=Object.entries(p.days).map(([l,w])=>{const d=workoutDef(l);return `Treino ${l} (${w.t}): `+d.ex.map(ex=>{const pr=presc(ex,ph);return `${ex.n} ${pr.sets}x${pr.r[0]}-${pr.r[1]}`}).join("; ")}).join("\n");
+  const dl=doneList().slice(-14);
+  const hist=dl.length?dl.map(s=>{const d=workoutDef(s.letter,s.split);
+    const ex=d.ex.map(e=>{const ok=setsOf(s.log[e.id]).filter(x=>x.ok);return ok.length?`${e.n}: ${ok.map(x=>(x.kg||"?")+"kg x"+(x.reps||"?")).join(", ")}`:null}).filter(Boolean);
+    return `${s.date} Treino ${s.letter} (semana ${(s.ph!=null?s.ph:phaseOf(s.date).i)+1} ${PHASES[s.ph!=null?s.ph:phaseOf(s.date).i].name})${s.quick?" [marcado sem registro de cargas]":""}\n  `+(ex.join("\n  ")||"sem cargas registradas")}).join("\n"):"Nenhum treino concluído ainda.";
+  const from=addDays(mondayOf(t),-28);const planned=S.settings.days.length*4;
+  const done4=doneList().filter(s=>s.date>=from&&s.date<mondayOf(t)).length;
+  return `Data de hoje: ${fmt(t,"long")} (${t}).
+Objetivo: hipertrofia. Divisão ${S.settings.split}, ${S.settings.days.length} dias/semana (${S.settings.days.map(d=>WD[d]).join(", ")}).
+Mesociclo de 4 semanas: 1 Base (RIR 2-3), 2 Volume (+1 série), 3 Intensidade (-2 reps, +5% carga), 4 Deload (-40%). Semana atual: ${ph.week} (${ph.name}).
+Progressão dupla: ao completar todas as séries no topo da faixa, sobe a carga.
+Frequência nas últimas 4 semanas completas: ${done4} de ${planned} treinos planejados.
+Próximos treinos: ${upcoming(5).map(u=>fmt(u.date)+" "+u.letter).join(", ")}.
+
+PROGRAMA ATUAL (prescrição desta semana):
+${plan}
+
+HISTÓRICO RECENTE (até 14 treinos, séries concluídas):
+${hist}`;
+}
+const COACH=`Você é um treinador de musculação experiente (CREF), especialista em hipertrofia, falando com um aluno pelo app de treino dele. Responda em português do Brasil, de forma direta e prática, citando números reais do histórico (cargas, repetições, datas) quando existirem. Use títulos curtos com "## " e listas com "- ". Não invente dados que não estão no contexto. Se o aluno relatar dor aguda, lesão ou sintoma preocupante, recomende parar o exercício e procurar um profissional de saúde. Seja conciso: no máximo uns 250 palavras, a menos que o aluno peça detalhes.`;
+async function aiInit(){
+  if(!window.claude||typeof window.claude.use!=="function")return;
+  try{const f=await window.claude.use("sample");if(f){AI.fn=f;document.getElementById("tab-coach").hidden=false;render()}}catch(e){}
+}
+async function runAnalysis(){
+  if(!AI.fn||AI.busy)return;
+  AI.busy=true;AI.err="";AI.out="";render();
+  const prompt=`${COACH}\n\n${aiContext()}\n\nTAREFA: Faça uma análise do meu progresso e me diga o que ajustar. Use exatamente estas seções:\n## Resumo\n## O que está indo bem\n## Ajustes recomendados (com cargas e repetições concretas por exercício quando houver histórico)\n## Foco da próxima semana\nSe ainda não houver histórico, explique como começar a semana atual e como escolher as cargas iniciais.`;
+  try{
+    const r=await AI.fn(prompt,{cache:false,onText:({text})=>{AI.out=text;const el=document.getElementById("ai-an");if(el)el.innerHTML=md(text)}});
+    AI.out=r.text;
+  }catch(e){AI.err=aiErr(e);if(e&&e.text)AI.out=e.text}
+  AI.busy=false;render();
+}
+async function askCoach(q){
+  q=(q||"").trim(); if(!AI.fn||AI.chatBusy||!q)return;
+  AI.chat.push({role:"user",content:q});AI.chat.push({role:"assistant",content:""});AI.chatBusy=true;AI.chatErr="";render();
+  const msgs=AI.chat.slice(0,-1).map((m,i)=>i===0?{role:"user",content:`${COACH}\n\n${aiContext()}\n\nPERGUNTA DO ALUNO: ${m.content}`}:m);
+  const last=AI.chat[AI.chat.length-1];
+  try{
+    const r=await AI.fn(msgs,{cache:false,onText:({text})=>{last.content=text;const el=document.getElementById("ai-last");if(el)el.innerHTML=md(text)}});
+    last.content=r.text;
+  }catch(e){AI.chatErr=aiErr(e);if(e&&e.text)last.content=e.text;else AI.chat.splice(-2,2)}
+  AI.chatBusy=false;render();
+  const c=document.getElementById("ai-chat-end");if(c)c.scrollIntoView({block:"end"});
+}
+async function findAlternatives(exId,reason){
+  if(!AI.fn)return;
+  const s=S.sessions[curDate()];const letter=s?s.letter:curLetter();
+  const ex=workoutDef(letter,s&&s.split).ex.find(x=>x.id===exId); if(!ex)return;
+  AI.alt={exId,reason,loading:true,list:null,err:""};render();
+  const others=workoutDef(letter,s&&s.split).ex.map(x=>x.n).join(", ");
+  const prompt=`Você é um treinador de musculação especialista em hipertrofia. Sugira 3 exercícios para substituir "${ex.n}" no Treino ${letter} (${workoutDef(letter).t}). Motivo da troca: ${reason}. Os outros exercícios do treino são: ${others} (não repita nenhum deles). A substituição deve trabalhar o mesmo grupo muscular com padrão de movimento parecido e caber na prescrição de ${ex.s} séries de ${ex.r[0]}-${ex.r[1]} repetições. ${/dor/i.test(reason)?"Priorize opções com menor estresse articular e amplitude controlável.":""}
+Responda SOMENTE com JSON no formato: {"alternativas":[{"nome":"nome do exercício em português","porque":"uma frase curta explicando a escolha","dica":"uma dica curta de execução"}]}`;
+  try{
+    const r=await AI.fn.json(prompt,{modelTier:"quick"});
+    const list=(r&&Array.isArray(r.alternativas)?r.alternativas:[]).filter(a=>a&&a.nome).slice(0,3);
+    if(!list.length)throw{code:"invalid_json"};
+    if(AI.alt&&AI.alt.exId===exId){AI.alt.loading=false;AI.alt.list=list}
+  }catch(e){if(AI.alt&&AI.alt.exId===exId){AI.alt.loading=false;AI.alt.err=aiErr(e)}}
+  render();
+}
+function altBox(ex){
+  const a=AI.alt; if(!a||a.exId!==ex.id)return"";
+  const reasons=["Aparelho ocupado","Sinto dor ou desconforto","Não tenho esse equipamento","Quero variar o estímulo"];
+  let body;
+  if(!a.reason)body=`<span class="small muted">Por que você quer trocar?</span><div class="ai-chips">${reasons.map(r=>`<button data-act="altwhy" data-ex="${ex.id}" data-r="${esc(r)}">${r}</button>`).join("")}</div>`;
+  else if(a.loading)body=`<span class="ai-wait small">Buscando alternativas para ${esc(ex.n)}…</span>`;
+  else if(a.err)body=`<span class="ai-err">${esc(a.err)}</span><button class="btn" data-act="altwhy" data-ex="${ex.id}" data-r="${esc(a.reason)}">Tentar de novo</button>`;
+  else body=`<span class="small muted">Motivo: ${esc(a.reason)}</span>`+a.list.map((x,i)=>`<div class="alt"><div style="min-width:0"><b>${esc(x.nome)}</b><div class="small muted">${esc(x.porque||"")}</div></div><button class="btn" data-act="altuse" data-ex="${ex.id}" data-i="${i}">Usar</button></div>`).join("");
+  return `<div class="altbox"><div class="row" style="justify-content:space-between"><b class="small">Alternativas com IA</b><button class="btn ghost" style="padding:2px 8px" data-act="altclose" aria-label="Fechar">✕</button></div>${body}</div>`;
+}
+function viewCoach(){
+  const chips=["Tenho só 40 minutos hoje, como encurto o treino?","Estagnei no supino, o que fazer?","Senti dor no ombro no treino de empurrar","Estou dormindo mal, devo mudar algo?","Quanto de proteína devo comer por dia?"];
+  const chat=AI.chat.map((m,i)=>m.role==="user"?`<div class="msg me">${esc(m.content)}</div>`:`<div class="msg ai ai-out" ${i===AI.chat.length-1?'id="ai-last"':""}>${m.content?md(m.content):'<span class="ai-wait">Pensando…</span>'}</div>`).join("");
+  return `<div class="stack">
+    <div class="row" style="justify-content:space-between"><h1>Coach IA</h1><span class="sync">${syncNote()}</span></div>
+    <div class="card stack">
+      <div><h2>Análise do seu progresso</h2><p class="small muted" style="margin:4px 0 0">A IA lê seu programa, a fase do ciclo e os últimos 14 treinos com cargas e repetições, e diz o que ajustar.</p></div>
+      ${AI.out||AI.busy?`<div class="ai-out" id="ai-an">${AI.out?md(AI.out):'<span class="ai-wait">Analisando seus treinos…</span>'}</div>`:""}
+      ${AI.err?`<div class="ai-err">${esc(AI.err)}</div>`:""}
+      <button class="btn ${AI.out?"":"primary"}" data-act="analyze" ${AI.busy?"disabled":""}>${AI.busy?"Analisando…":AI.out?"Analisar de novo":"Analisar meu progresso"}</button>
+    </div>
+    <div class="card stack">
+      <div><h2>Pergunte ao treinador</h2><p class="small muted" style="margin:4px 0 0">As respostas levam em conta seu programa e histórico.</p></div>
+      ${chat?`<div class="chat">${chat}</div>`:`<div class="ai-chips">${chips.map(c=>`<button data-act="askchip" data-q="${esc(c)}">${c}</button>`).join("")}</div>`}
+      ${AI.chatErr?`<div class="ai-err">${esc(AI.chatErr)}</div>`:""}
+      <form class="ask" id="askform"><label for="askq" hidden>Sua pergunta</label><textarea id="askq" placeholder="Ex.: posso trocar o treino C de dia?" rows="2"></textarea><button class="btn primary" type="submit" ${AI.chatBusy?"disabled":""}>Enviar</button></form>
+      ${AI.chat.length?`<button class="btn ghost" data-act="clearchat">Nova conversa</button>`:""}
+      <span id="ai-chat-end"></span>
+    </div>
+    <p class="small muted" style="margin:0">As sugestões da IA são orientativas e não substituem o acompanhamento de um profissional de educação física ou de saúde.</p>
+  </div>`;
+}
 
 /* ---------- render ---------- */
 const $app=document.getElementById("app");
@@ -385,6 +530,7 @@ function render(){
   document.querySelectorAll("nav.tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===UI.tab));
   if(UI.tab==="hoje")$app.innerHTML=viewHoje();
   else if(UI.tab==="agenda")$app.innerHTML=viewAgenda();
+  else if(UI.tab==="coach")$app.innerHTML=viewCoach();
   else $app.innerHTML=viewPrograma();
 }
 
@@ -422,8 +568,9 @@ function viewHoje(){
     }
     const last=sg.ref?`Última: ${kg(sg.ref.kg)} kg × ${sg.ref.reps.map(r=>r==null?"?":r).join(", ")}`:"";
     return `<div class="card ex"><div class="ex-head"><span class="ex-n num">${n+1}</span><div class="meta">
-        <h3>${ex.n}</h3>
-        <div class="presc num"><span><b>${p.sets} × ${p.r[0]}–${p.r[1]}</b> reps</span><span>descanso <b>${p.rest}s</b></span><span>RIR <b>${ph.rir}</b></span></div></div></div>
+        <h3>${esc(ex.n)}</h3>${ex.orig?`<div class="subnote">No lugar de ${ex.origN} · <button data-act="unsub" data-o="${ex.orig}">voltar ao original</button></div>`:""}
+        <div class="presc num"><span><b>${p.sets} × ${p.r[0]}–${p.r[1]}</b> reps</span><span>descanso <b>${p.rest}s</b></span><span>RIR <b>${ph.rir}</b></span></div></div>${AI.fn&&!done?`<button class="altbtn" data-act="alt" data-ex="${ex.id}">Trocar</button>`:""}</div>
+      ${altBox(ex)}
       <div class="sug"><span>Carga sugerida: <strong class="num">${sg.kg!=null?kg(sg.kg)+" kg":"a definir"}</strong> <span class="muted">${sg.kg!=null?"· "+sg.txt:""}</span></span><span class="muted num">${sg.kg!=null?last:sg.txt}</span></div>
       <div class="sets">${rows.join("")}</div>
       ${ex.tip?`<div class="tip" style="padding-top:10px">${ex.tip}</div>`:""}</div>`;
@@ -625,6 +772,25 @@ document.addEventListener("click",e=>{
         render(); toast("Backup importado");
       }catch(err){msg.textContent="Esse código não é um backup válido. Cole o texto completo gerado em “Copiar backup”."}
       break;}
+    case "analyze": runAnalysis(); break;
+    case "askchip": askCoach(b.dataset.q); break;
+    case "clearchat": AI.chat=[]; AI.chatErr=""; render(); break;
+    case "alt": AI.alt=AI.alt&&AI.alt.exId===b.dataset.ex?null:{exId:b.dataset.ex}; render(); break;
+    case "altclose": AI.alt=null; render(); break;
+    case "altwhy": findAlternatives(b.dataset.ex,b.dataset.r); break;
+    case "altuse":{
+      const a=AI.alt; if(!a||!a.list)break; const x=a.list[+b.dataset.i];
+      const s=S.sessions[d]; const def=workoutDef(s?s.letter:curLetter(),s&&s.split); const ex=def.ex.find(e=>e.id===b.dataset.ex); if(!ex)break;
+      if(s&&s.log[ex.id]&&s.log[ex.id].sets.some(y=>y.ok)){toast("Desmarque as séries deste exercício antes de trocar");break}
+      const orig=ex.orig||ex.id; S.settings.subs=S.settings.subs||{};
+      const slug=x.nome.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,40);
+      S.settings.subs[orig]={id:"ia-"+slug,n:String(x.nome).slice(0,80),tip:String(x.dica||x.porque||"").slice(0,200)};
+      if(s&&s.log[ex.id]){delete s.log[ex.id];saveSession(d)}
+      AI.alt=null; saveSettings(); render(); toast("Trocado por "+x.nome); break;}
+    case "unsub":{
+      const s=S.sessions[d]; const cur=S.settings.subs&&S.settings.subs[b.dataset.o];
+      if(s&&cur&&s.log[cur.id]&&s.log[cur.id].sets.some(y=>y.ok)){toast("Desmarque as séries deste exercício antes de trocar");break}
+      if(S.settings.subs)delete S.settings.subs[b.dataset.o]; saveSettings(); render(); break;}
     case "t15": UI.timerEnd+=15000; break;
     case "tskip": UI.timerEnd=0; $timer.hidden=true; break;
   }
@@ -633,7 +799,15 @@ document.addEventListener("click",e=>{
 /* virada de dia com o app aberto */
 let lastDay=today(); setInterval(()=>{if(today()!==lastDay){lastDay=today();render()}},60000);
 
-store.loadLocal(); render(); store.init();
+document.addEventListener("submit",e=>{
+  if(e.target.id!=="askform")return; e.preventDefault();
+  const ta=document.getElementById("askq"); const q=ta.value; ta.value=""; askCoach(q);
+});
+document.addEventListener("keydown",e=>{
+  if(e.target.id==="askq"&&e.key==="Enter"&&!e.shiftKey){e.preventDefault();document.getElementById("askform").requestSubmit()}
+});
+
+store.loadLocal(); render(); store.init(); aiInit();
 })();
 </script>
 
